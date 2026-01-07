@@ -1,0 +1,73 @@
+﻿<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MDOS</title>
+    <meta name="theme-color" content="#0d2b2b" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand-mark">MD</span>
+          <div>
+            <div class="brand-title">MDOS</div>
+            <div class="brand-subtitle">Maxim Driver Operational Sistem</div>
+          </div>
+        </div>
+      </header>
+      <main class="app-main">
+        <section id="sesi" class="tab-panel" data-tab="sesi">
+          <h1>Sesi</h1>
+          <p class="muted">Ringkasan sesi harian akan tampil di sini.</p>
+          <div class="placeholder-card">
+            <div class="placeholder-title">Belum ada sesi aktif</div>
+            <div class="placeholder-body">
+              Jalankan sesi baru untuk mulai pelacakan rotasi.
+            </div>
+          </div>
+        </section>
+        <section id="rotasi" class="tab-panel" data-tab="rotasi">
+          <h1>Rotasi</h1>
+          <p class="muted">Daftar titik jangkar untuk rotasi harian.</p>
+          <div class="mode-toggle" role="group" aria-label="Mode rotasi">
+            <button class="toggle-button" data-mode="A" type="button">Mode A</button>
+            <button class="toggle-button" data-mode="B" type="button">Mode B</button>
+          </div>
+          <div class="rotasi-meta" id="rotasi-meta"></div>
+          <ul class="spot-list" id="spot-list" role="list"></ul>
+        </section>
+        <section id="log" class="tab-panel" data-tab="log">
+          <h1>Log</h1>
+          <p class="muted">Aktivitas penting akan tercatat di sini.</p>
+          <div class="placeholder-card">
+            <div class="placeholder-title">Log kosong</div>
+            <div class="placeholder-body">
+              Belum ada aktivitas tercatat untuk hari ini.
+            </div>
+          </div>
+        </section>
+        <section id="setelan" class="tab-panel" data-tab="setelan">
+          <h1>Setelan</h1>
+          <p class="muted">Atur preferensi penggunaan MDOS.</p>
+          <div class="placeholder-card">
+            <div class="placeholder-title">Pengaturan dasar</div>
+            <div class="placeholder-body">
+              Fitur tambahan akan menyusul di iterasi berikutnya.
+            </div>
+          </div>
+        </section>
+      </main>
+      <nav class="bottom-nav" aria-label="Navigasi utama">
+        <a href="#sesi" data-tab-link="sesi">Sesi</a>
+        <a href="#rotasi" data-tab-link="rotasi">Rotasi</a>
+        <a href="#log" data-tab-link="log">Log</a>
+        <a href="#setelan" data-tab-link="setelan">Setelan</a>
+      </nav>
+    </div>
+    <script src="app.js" defer></script>
+  </body>
+</html>
