@@ -1,8 +1,9 @@
-﻿const CACHE_NAME = 'mdos-cache-v1';
+const CACHE_NAME = 'mdos-cache-v2';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
+  './db.js',
   './app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

@@ -54,9 +54,13 @@
           <h1>Setelan</h1>
           <p class="muted">Atur preferensi penggunaan MDOS.</p>
           <div class="placeholder-card">
-            <div class="placeholder-title">Pengaturan dasar</div>
+            <div class="placeholder-title">Pengaturan data</div>
             <div class="placeholder-body">
-              Fitur tambahan akan menyusul di iterasi berikutnya.
+              Gunakan opsi di bawah untuk mengulang seed spot dari awal.
+            </div>
+            <button class="action-button" id="reset-data" type="button">Reset Data</button>
+            <div class="setting-note">
+              Ini akan menghapus semua data spot di perangkat.
             </div>
           </div>
         </section>
@@ -68,6 +72,7 @@
         <a href="#setelan" data-tab-link="setelan">Setelan</a>
       </nav>
     </div>
+    <script src="db.js"></script>
     <script src="app.js" defer></script>
   </body>
 </html>
