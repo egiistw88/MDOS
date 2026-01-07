@@ -22,6 +22,17 @@ const logSkipButton = document.getElementById('log-skip');
 const logDropoffButton = document.getElementById('log-dropoff');
 const eventList = document.getElementById('event-list');
 const logMeta = document.getElementById('log-meta');
+const notifEnabledToggle = document.getElementById('notif-enabled');
+const notifRequestButton = document.getElementById('notif-request');
+const notifTestButton = document.getElementById('notif-test');
+const vapidKeyInput = document.getElementById('vapid-key');
+const saveVapidButton = document.getElementById('save-vapid');
+const pushSubscribeButton = document.getElementById('push-subscribe');
+const pushExportButton = document.getElementById('push-export');
+const notifStatus = document.getElementById('notif-status');
+const quietStartInput = document.getElementById('quiet-start');
+const quietEndInput = document.getElementById('quiet-end');
+const quietSaveButton = document.getElementById('quiet-save');
 
 const state = {
   rotasiMode: 'A',
@@ -29,6 +40,20 @@ const state = {
   activeSession: null,
   activeSpot: null,
   actionBusy: false,
+};
+
+const notificationDefaults = {
+  quietStart: '22:00',
+  quietEnd: '05:30',
+};
+
+const notificationState = {
+  enabled: false,
+  permission: 'default',
+  quietStart: notificationDefaults.quietStart,
+  quietEnd: notificationDefaults.quietEnd,
+  vapidKey: '',
+  hasSubscription: false,
 };
 
 let seedPromise = null;
@@ -180,6 +205,231 @@ function setSessionMode(mode) {
   }
   state.sessionMode = mode;
   updateSessionModeButtons();
+}
+
+function parseTimeToMinutes(value) {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+  const parts = value.split(':');
+  if (parts.length !== 2) {
+    return null;
+  }
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function normalizeTimeValue(value, fallback) {
+  return parseTimeToMinutes(value) === null ? fallback : value;
+}
+
+async function getKVOrDefault(key, defaultValue) {
+  const value = await getKV(key);
+  if (value === null || value === undefined || value === '') {
+    await setKV(key, defaultValue);
+    return defaultValue;
+  }
+  return value;
+}
+
+async function isQuietHoursNow() {
+  const startValue = await getKVOrDefault('quietHoursStart', notificationDefaults.quietStart);
+  const endValue = await getKVOrDefault('quietHoursEnd', notificationDefaults.quietEnd);
+  const startMinutes = parseTimeToMinutes(startValue);
+  const endMinutes = parseTimeToMinutes(endValue);
+  if (startMinutes === null || endMinutes === null) {
+    return false;
+  }
+  if (startMinutes === endMinutes) {
+    return false;
+  }
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  if (startMinutes < endMinutes) {
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
+
+function getNotificationPermission() {
+  if (!('Notification' in window)) {
+    return 'denied';
+  }
+  return Notification.permission;
+}
+
+async function ensureNotificationPermission() {
+  if (!('Notification' in window)) {
+    return false;
+  }
+  const permission = Notification.permission;
+  if (permission === 'granted') {
+    return true;
+  }
+  if (permission === 'denied') {
+    return false;
+  }
+  const result = await Notification.requestPermission();
+  return result === 'granted';
+}
+
+async function showLocalNotification(title, body, data = {}, options = {}) {
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+    return false;
+  }
+  const enabled = await getKV('notificationsEnabled');
+  if (!enabled) {
+    return false;
+  }
+  if (!options.ignoreQuietHours && (await isQuietHoursNow())) {
+    return false;
+  }
+  const permission = getNotificationPermission();
+  if (permission !== 'granted') {
+    return false;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const payload = {
+      body,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      data,
+      renotify: false,
+    };
+    if (options.tag) {
+      payload.tag = options.tag;
+    }
+    if (options.requireInteraction) {
+      payload.requireInteraction = true;
+    }
+    await registration.showNotification(title, payload);
+    return true;
+  } catch (error) {
+    console.error('Gagal menampilkan notifikasi', error);
+    return false;
+  }
+}
+
+function updateNotificationUI() {
+  const permissionLabel = 'Notification' in window ? notificationState.permission : 'tidak didukung';
+  const enabledLabel = notificationState.enabled ? 'aktif' : 'nonaktif';
+  const subscriptionLabel = notificationState.hasSubscription ? 'ada' : 'belum ada';
+  const pushSupportLabel = 'PushManager' in window ? 'didukung' : 'tidak didukung';
+
+  if (notifEnabledToggle) {
+    notifEnabledToggle.checked = notificationState.enabled;
+    notifEnabledToggle.disabled = !('Notification' in window);
+  }
+  if (quietStartInput) {
+    quietStartInput.value = notificationState.quietStart;
+  }
+  if (quietEndInput) {
+    quietEndInput.value = notificationState.quietEnd;
+  }
+  if (vapidKeyInput) {
+    vapidKeyInput.value = notificationState.vapidKey;
+  }
+  if (notifStatus) {
+    notifStatus.textContent = `Status: ${enabledLabel}, izin ${permissionLabel}, push ${pushSupportLabel}, subscription ${subscriptionLabel}.`;
+  }
+  if (notifRequestButton) {
+    notifRequestButton.disabled = !('Notification' in window);
+  }
+  if (notifTestButton) {
+    notifTestButton.disabled = !('Notification' in window);
+  }
+  if (pushSubscribeButton) {
+    pushSubscribeButton.disabled = !('Notification' in window) || !('PushManager' in window);
+  }
+  if (pushExportButton) {
+    pushExportButton.disabled = !notificationState.hasSubscription;
+  }
+}
+
+async function loadNotificationSettings() {
+  notificationState.enabled = !!(await getKV('notificationsEnabled'));
+  const startValue = await getKVOrDefault('quietHoursStart', notificationDefaults.quietStart);
+  const endValue = await getKVOrDefault('quietHoursEnd', notificationDefaults.quietEnd);
+  notificationState.quietStart = normalizeTimeValue(startValue, notificationDefaults.quietStart);
+  notificationState.quietEnd = normalizeTimeValue(endValue, notificationDefaults.quietEnd);
+  notificationState.vapidKey = (await getKV('vapidPublicKey')) || '';
+  notificationState.hasSubscription = !!(await getKV('pushSubscription'));
+  notificationState.permission = getNotificationPermission();
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i += 1) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+async function subscribeToPushIfPossible() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    window.alert('Push tidak didukung di browser ini.');
+    return;
+  }
+  const vapidKey = (await getKV('vapidPublicKey')) || '';
+  if (!vapidKey.trim()) {
+    window.alert('Isi VAPID public key dulu.');
+    return;
+  }
+  const permissionGranted = await ensureNotificationPermission();
+  notificationState.permission = getNotificationPermission();
+  if (!permissionGranted) {
+    updateNotificationUI();
+    window.alert('Izin notifikasi belum diberikan.');
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey.trim()),
+      });
+    }
+    await setKV('pushSubscription', subscription.toJSON());
+    notificationState.hasSubscription = true;
+    updateNotificationUI();
+    window.alert('Push subscription tersimpan.');
+  } catch (error) {
+    console.error('Gagal membuat subscription', error);
+    window.alert('Gagal membuat subscription. Periksa VAPID key.');
+  }
+}
+
+async function exportPushSubscription() {
+  const subscription = await getKV('pushSubscription');
+  if (!subscription) {
+    window.alert('Belum ada subscription.');
+    return;
+  }
+  const text = JSON.stringify(subscription, null, 2);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      window.alert('Subscription disalin ke clipboard.');
+      return;
+    } catch (error) {
+      console.error('Gagal menyalin subscription', error);
+    }
+  }
+  window.prompt('Salin subscription berikut:', text);
 }
 
 function formatDuration(ms) {
@@ -433,6 +683,17 @@ async function evaluateTimer(session, elapsed) {
       timer.softEmitted = true;
       updated = true;
       await addSessionEvent('TIMER_SOFT_REACHED', { spotId: session.activeSpotId });
+      await showLocalNotification(
+        'MDOS: Soft limit tercapai',
+        'Kalau masih sepi, siap pindah spot.',
+        {
+          route: '#sesi',
+          kind: 'timer-soft',
+          sessionId: session.id,
+          spotId: session.activeSpotId,
+        },
+        { tag: 'mdos-timer-soft' }
+      );
     }
     if (elapsed < timer.hardMs && timer.state !== 'soft_reached') {
       timer.state = 'soft_reached';
@@ -446,6 +707,17 @@ async function evaluateTimer(session, elapsed) {
       updated = true;
       hardTriggeredNow = true;
       await addSessionEvent('TIMER_HARD_REACHED', { spotId: session.activeSpotId });
+      await showLocalNotification(
+        'MDOS: Hard limit tercapai',
+        'Pindah spot sekarang sesuai SOP.',
+        {
+          route: '#sesi',
+          kind: 'timer-hard',
+          sessionId: session.id,
+          spotId: session.activeSpotId,
+        },
+        { tag: 'mdos-timer-hard', requireInteraction: true }
+      );
     }
     if (timer.state !== 'hard_reached') {
       timer.state = 'hard_reached';
@@ -759,6 +1031,85 @@ if (logDropoffButton) {
   logDropoffButton.addEventListener('click', () => handleQuickLog('TRIP_DROPOFF_RECORDED'));
 }
 
+if (notifEnabledToggle) {
+  notifEnabledToggle.addEventListener('change', async (event) => {
+    const enabled = event.target.checked;
+    await setKV('notificationsEnabled', enabled);
+    notificationState.enabled = enabled;
+    updateNotificationUI();
+  });
+}
+
+if (notifRequestButton) {
+  notifRequestButton.addEventListener('click', async () => {
+    const granted = await ensureNotificationPermission();
+    notificationState.permission = getNotificationPermission();
+    updateNotificationUI();
+    if (!granted) {
+      window.alert('Izin notifikasi belum diberikan.');
+    }
+  });
+}
+
+if (notifTestButton) {
+  notifTestButton.addEventListener('click', async () => {
+    const granted = await ensureNotificationPermission();
+    notificationState.permission = getNotificationPermission();
+    updateNotificationUI();
+    if (!granted) {
+      window.alert('Izin notifikasi belum diberikan.');
+      return;
+    }
+    const shown = await showLocalNotification(
+      'MDOS Test',
+      'Notifikasi berfungsi.',
+      { kind: 'test', route: '#setelan' },
+      { tag: 'mdos-test', ignoreQuietHours: true }
+    );
+    if (!shown) {
+      window.alert('Notifikasi tidak ditampilkan. Pastikan toggle aktif.');
+    }
+  });
+}
+
+if (saveVapidButton) {
+  saveVapidButton.addEventListener('click', async () => {
+    const value = vapidKeyInput ? vapidKeyInput.value.trim() : '';
+    if (value) {
+      await setKV('vapidPublicKey', value);
+      notificationState.vapidKey = value;
+    } else {
+      await deleteKV('vapidPublicKey');
+      notificationState.vapidKey = '';
+    }
+    updateNotificationUI();
+  });
+}
+
+if (quietSaveButton) {
+  quietSaveButton.addEventListener('click', async () => {
+    const startValue = quietStartInput ? quietStartInput.value : '';
+    const endValue = quietEndInput ? quietEndInput.value : '';
+    if (parseTimeToMinutes(startValue) === null || parseTimeToMinutes(endValue) === null) {
+      window.alert('Format jam tenang tidak valid.');
+      return;
+    }
+    await setKV('quietHoursStart', startValue);
+    await setKV('quietHoursEnd', endValue);
+    notificationState.quietStart = startValue;
+    notificationState.quietEnd = endValue;
+    updateNotificationUI();
+  });
+}
+
+if (pushSubscribeButton) {
+  pushSubscribeButton.addEventListener('click', subscribeToPushIfPossible);
+}
+
+if (pushExportButton) {
+  pushExportButton.addEventListener('click', exportPushSubscription);
+}
+
 if (resetButton) {
   resetButton.addEventListener('click', async () => {
     const confirmed = window.confirm('Reset data spot di perangkat ini?');
@@ -778,6 +1129,8 @@ if (resetButton) {
 
 async function initApp() {
   await ensureSeedReady();
+  await loadNotificationSettings();
+  updateNotificationUI();
   await initSessionState();
   updateRotasiModeButtons();
   updateSessionModeButtons();

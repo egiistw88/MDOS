@@ -506,6 +506,28 @@ async function getEventsForSession(sessionId, limit = 200) {
   return results.slice(0, limit);
 }
 
+async function getKV(key) {
+  const db = await openMdosDB();
+  const tx = db.transaction(KV_STORE, 'readonly');
+  const record = await requestToPromise(tx.objectStore(KV_STORE).get(key));
+  await transactionComplete(tx);
+  return record ? record.value : null;
+}
+
+async function setKV(key, value) {
+  const db = await openMdosDB();
+  const tx = db.transaction(KV_STORE, 'readwrite');
+  tx.objectStore(KV_STORE).put({ key, value });
+  await transactionComplete(tx);
+}
+
+async function deleteKV(key) {
+  const db = await openMdosDB();
+  const tx = db.transaction(KV_STORE, 'readwrite');
+  tx.objectStore(KV_STORE).delete(key);
+  await transactionComplete(tx);
+}
+
 async function clearAllData() {
   const db = await openMdosDB();
   const tx = db.transaction(STORE, 'readwrite');

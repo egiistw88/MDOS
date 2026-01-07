@@ -73,14 +73,67 @@
         <section id="setelan" class="tab-panel" data-tab="setelan">
           <h1>Setelan</h1>
           <p class="muted">Atur preferensi penggunaan MDOS.</p>
-          <div class="placeholder-card">
-            <div class="placeholder-title">Pengaturan data</div>
-            <div class="placeholder-body">
-              Gunakan opsi di bawah untuk mengulang seed spot dari awal.
+          <div class="settings-panel">
+            <div class="settings-card">
+              <div class="settings-title">Pusat Notifikasi</div>
+              <p class="settings-text">Notifikasi timer: Soft limit & Hard limit.</p>
+              <p class="settings-text">
+                Tanpa server push, notifikasi hanya dijamin saat aplikasi sedang dibuka/baru aktif.
+                Untuk notifikasi saat aplikasi benar-benar tertutup, perlu server push.
+              </p>
+              <p class="settings-text">Untuk notifikasi saat aplikasi tertutup, butuh server push.</p>
+              <label class="toggle-row" for="notif-enabled">
+                <input type="checkbox" id="notif-enabled" />
+                <span>Aktifkan notifikasi lokal</span>
+              </label>
+              <div class="settings-status" id="notif-status"></div>
+              <div class="settings-actions">
+                <button class="action-button" id="notif-request" type="button">Aktifkan Notifikasi</button>
+                <button class="action-button action-secondary" id="notif-test" type="button">Test Notifikasi</button>
+              </div>
+              <div class="form-grid">
+                <div class="form-field">
+                  <label class="form-label" for="quiet-start">Jam tenang mulai</label>
+                  <input class="form-control" type="time" id="quiet-start" value="22:00" />
+                </div>
+                <div class="form-field">
+                  <label class="form-label" for="quiet-end">Jam tenang selesai</label>
+                  <input class="form-control" type="time" id="quiet-end" value="05:30" />
+                </div>
+              </div>
+              <button class="action-button action-secondary" id="quiet-save" type="button">
+                Simpan Jam Tenang
+              </button>
+              <div class="form-field">
+                <label class="form-label" for="vapid-key">VAPID public key</label>
+                <textarea
+                  class="form-control"
+                  id="vapid-key"
+                  rows="3"
+                  placeholder="Tempel VAPID public key (optional)"
+                ></textarea>
+              </div>
+              <div class="settings-actions">
+                <button class="action-button action-secondary" id="save-vapid" type="button">
+                  Simpan VAPID Key
+                </button>
+                <button class="action-button" id="push-subscribe" type="button">
+                  Buat Push Subscription
+                </button>
+                <button class="action-button action-secondary" id="push-export" type="button">
+                  Export Subscription
+                </button>
+              </div>
             </div>
-            <button class="action-button" id="reset-data" type="button">Reset Data</button>
-            <div class="setting-note">
-              Ini akan menghapus semua data spot di perangkat.
+            <div class="settings-card">
+              <div class="settings-title">Pengaturan data</div>
+              <div class="settings-text">
+                Gunakan opsi di bawah untuk mengulang seed spot dari awal.
+              </div>
+              <button class="action-button" id="reset-data" type="button">Reset Data</button>
+              <div class="setting-note">
+                Ini akan menghapus semua data spot di perangkat.
+              </div>
             </div>
           </div>
         </section>
