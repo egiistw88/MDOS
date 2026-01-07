@@ -1,17 +1,40 @@
 const tabIds = ['sesi', 'rotasi', 'log', 'setelan'];
 const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
 const tabLinks = Array.from(document.querySelectorAll('[data-tab-link]'));
-const toggleButtons = Array.from(document.querySelectorAll('.toggle-button'));
+const rotasiModeButtons = Array.from(document.querySelectorAll('[data-rotasi-mode]'));
+const sessionModeButtons = Array.from(document.querySelectorAll('[data-session-mode]'));
 const spotList = document.getElementById('spot-list');
 const rotasiMeta = document.getElementById('rotasi-meta');
 const resetButton = document.getElementById('reset-data');
 
+const sessionStatus = document.getElementById('session-status');
+const activeSpotEl = document.getElementById('active-spot');
+const timerDisplay = document.getElementById('timer-display');
+const timerHint = document.getElementById('timer-hint');
+const timerProgress = document.getElementById('timer-progress');
+const startSessionButton = document.getElementById('start-session');
+const endSessionButton = document.getElementById('end-session');
+const arriveSpotButton = document.getElementById('arrive-spot');
+const moveNextButton = document.getElementById('move-next');
+const openMapsButton = document.getElementById('open-maps');
+const logAcceptButton = document.getElementById('log-accept');
+const logSkipButton = document.getElementById('log-skip');
+const logDropoffButton = document.getElementById('log-dropoff');
+const eventList = document.getElementById('event-list');
+const logMeta = document.getElementById('log-meta');
+
 const state = {
-  mode: 'A',
+  rotasiMode: 'A',
+  sessionMode: 'A',
+  activeSession: null,
+  activeSpot: null,
+  actionBusy: false,
 };
 
 let seedPromise = null;
-let loadToken = 0;
+let rotasiLoadToken = 0;
+let timerIntervalId = null;
+let tickBusy = false;
 
 function ensureSeedReady() {
   if (!seedPromise) {
@@ -39,6 +62,23 @@ function syncRoute() {
     history.replaceState(null, '', `#${tab}`);
   }
   setActiveTab(tab);
+}
+
+function updateRotasiModeButtons() {
+  rotasiModeButtons.forEach((button) => {
+    const isActive = button.dataset.rotasiMode === state.rotasiMode;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
+}
+
+function updateSessionModeButtons() {
+  const mode = state.activeSession ? state.activeSession.mode : state.sessionMode;
+  sessionModeButtons.forEach((button) => {
+    const isActive = button.dataset.sessionMode === mode;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
 }
 
 function showLoading() {
@@ -105,37 +145,545 @@ function renderSpots(spots) {
     });
   }
 
-  rotasiMeta.textContent = `Mode ${state.mode} - ${spots.length} spot`;
+  rotasiMeta.textContent = `Mode ${state.rotasiMode} - ${spots.length} spot`;
 }
 
 async function loadSpotsForMode(mode) {
-  const requestId = ++loadToken;
+  const requestId = ++rotasiLoadToken;
   showLoading();
 
   try {
     await ensureSeedReady();
     const spots = await getSpotsByMode(mode);
-    if (requestId !== loadToken) {
+    if (requestId !== rotasiLoadToken) {
       return;
     }
     renderSpots(spots);
   } catch (error) {
     console.error('Gagal memuat spot', error);
-    if (requestId !== loadToken) {
+    if (requestId !== rotasiLoadToken) {
       return;
     }
     showError('Gagal memuat spot. Coba refresh.');
   }
 }
 
-function setMode(mode) {
-  state.mode = mode;
-  toggleButtons.forEach((button) => {
-    const isActive = button.dataset.mode === mode;
-    button.classList.toggle('is-active', isActive);
-    button.setAttribute('aria-pressed', String(isActive));
-  });
+function setRotasiMode(mode) {
+  state.rotasiMode = mode;
+  updateRotasiModeButtons();
   loadSpotsForMode(mode);
+}
+
+function setSessionMode(mode) {
+  if (state.activeSession) {
+    return;
+  }
+  state.sessionMode = mode;
+  updateSessionModeButtons();
+}
+
+function formatDuration(ms) {
+  const clamped = Math.max(ms, 0);
+  const totalSeconds = Math.floor(clamped / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatClock(timestamp) {
+  const date = new Date(timestamp);
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function getTimerHint(stateValue) {
+  if (stateValue === 'soft_reached') {
+    return 'Soft limit tercapai (kering).';
+  }
+  if (stateValue === 'hard_reached') {
+    return 'Hard limit tercapai - pindah spot.';
+  }
+  if (stateValue === 'running') {
+    return 'Timer berjalan.';
+  }
+  return 'Timer belum mulai.';
+}
+
+function renderSessionStatus() {
+  if (!sessionStatus) {
+    return;
+  }
+  if (!state.activeSession) {
+    sessionStatus.textContent = 'Belum mulai';
+    return;
+  }
+  sessionStatus.textContent = `Aktif - Mode ${state.activeSession.mode}`;
+}
+
+function renderActiveSpot() {
+  if (!activeSpotEl) {
+    return;
+  }
+  activeSpotEl.replaceChildren();
+
+  if (!state.activeSpot) {
+    const title = document.createElement('div');
+    title.className = 'active-spot-title';
+    title.textContent = 'Belum ada spot aktif';
+
+    const meta = document.createElement('div');
+    meta.className = 'active-spot-meta';
+    meta.textContent = 'Mulai sesi untuk melihat spot.';
+
+    activeSpotEl.append(title, meta);
+    return;
+  }
+
+  const title = document.createElement('div');
+  title.className = 'active-spot-title';
+  title.textContent = `${state.activeSpot.code} - ${state.activeSpot.name}`;
+
+  const meta = document.createElement('div');
+  meta.className = 'active-spot-meta';
+  meta.textContent = `${state.activeSpot.lat}, ${state.activeSpot.lng}`;
+
+  activeSpotEl.append(title, meta);
+}
+
+function renderTimerDisplay() {
+  if (!timerDisplay || !timerHint) {
+    return;
+  }
+
+  const session = state.activeSession;
+  if (!session || !session.timer) {
+    timerDisplay.textContent = '00:00';
+    timerHint.textContent = 'Timer belum mulai.';
+    if (timerProgress) {
+      timerProgress.max = 1;
+      timerProgress.value = 0;
+    }
+    return;
+  }
+
+  const timer = session.timer;
+  let elapsed = 0;
+  let remaining = 0;
+
+  if (timer.startedAt) {
+    elapsed = Date.now() - timer.startedAt;
+    remaining = Math.max(timer.hardMs - elapsed, 0);
+  }
+
+  timerDisplay.textContent = formatDuration(remaining);
+  timerHint.textContent = getTimerHint(timer.state);
+  if (timerProgress) {
+    timerProgress.max = timer.hardMs || 1;
+    timerProgress.value = Math.min(elapsed, timer.hardMs || 1);
+  }
+}
+
+function updateSessionControls() {
+  const session = state.activeSession;
+  const hasSession = !!session && session.status === 'active';
+  const timerState = session?.timer?.state || 'idle';
+  const isBusy = state.actionBusy;
+
+  if (startSessionButton) {
+    startSessionButton.disabled = isBusy || hasSession;
+  }
+  if (endSessionButton) {
+    endSessionButton.disabled = isBusy || !hasSession;
+  }
+  if (arriveSpotButton) {
+    arriveSpotButton.disabled = isBusy || !hasSession || timerState !== 'idle';
+  }
+  if (moveNextButton) {
+    moveNextButton.disabled = isBusy || !hasSession;
+  }
+  if (openMapsButton) {
+    openMapsButton.disabled = isBusy || !state.activeSpot;
+  }
+  if (logAcceptButton) {
+    logAcceptButton.disabled = isBusy || !hasSession;
+  }
+  if (logSkipButton) {
+    logSkipButton.disabled = isBusy || !hasSession;
+  }
+  if (logDropoffButton) {
+    logDropoffButton.disabled = isBusy || !hasSession;
+  }
+  sessionModeButtons.forEach((button) => {
+    button.disabled = isBusy || hasSession;
+  });
+}
+
+function renderSessionUI() {
+  updateSessionModeButtons();
+  renderSessionStatus();
+  renderActiveSpot();
+  renderTimerDisplay();
+  updateSessionControls();
+}
+
+async function refreshActiveSpot() {
+  if (!state.activeSession || !state.activeSession.activeSpotId) {
+    state.activeSpot = null;
+    return;
+  }
+  state.activeSpot = await getSpotById(state.activeSession.activeSpotId);
+}
+
+function renderEvents(events) {
+  if (!eventList || !logMeta) {
+    return;
+  }
+  eventList.replaceChildren();
+
+  if (!events.length) {
+    const empty = document.createElement('li');
+    empty.className = 'event-item';
+    empty.textContent = 'Belum ada event untuk sesi ini.';
+    eventList.appendChild(empty);
+    logMeta.textContent = 'Event: 0';
+    return;
+  }
+
+  events.forEach((event) => {
+    const item = document.createElement('li');
+    item.className = 'event-item';
+    const time = formatClock(event.at);
+    item.textContent = `${time} - ${event.type}`;
+    eventList.appendChild(item);
+  });
+
+  logMeta.textContent = `Event: ${events.length}`;
+}
+
+async function refreshLog() {
+  if (!eventList || !logMeta) {
+    return;
+  }
+  if (!state.activeSession) {
+    eventList.replaceChildren();
+    const empty = document.createElement('li');
+    empty.className = 'event-item';
+    empty.textContent = 'Belum ada sesi aktif.';
+    eventList.appendChild(empty);
+    logMeta.textContent = 'Event: 0';
+    return;
+  }
+
+  const events = await getEventsForSession(state.activeSession.id, 200);
+  renderEvents(events);
+}
+
+async function addSessionEvent(type, payload) {
+  const session = state.activeSession;
+  if (!session) {
+    return;
+  }
+  await addEvent({
+    sessionId: session.id,
+    type,
+    payload,
+  });
+  await refreshLog();
+}
+
+async function saveSession(session) {
+  await updateSession(session);
+  state.activeSession = session;
+}
+
+function stopTicker() {
+  if (timerIntervalId) {
+    window.clearInterval(timerIntervalId);
+    timerIntervalId = null;
+  }
+}
+
+function startTicker() {
+  stopTicker();
+  timerIntervalId = window.setInterval(() => {
+    tickTimer();
+  }, 1000);
+  tickTimer();
+}
+
+async function evaluateTimer(session, elapsed) {
+  const timer = session.timer;
+  if (!timer || timer.startedAt === null) {
+    return;
+  }
+
+  let updated = false;
+  let hardTriggeredNow = false;
+
+  if (elapsed < timer.softMs) {
+    if (timer.state !== 'running') {
+      timer.state = 'running';
+      updated = true;
+    }
+  }
+
+  if (elapsed >= timer.softMs) {
+    if (!timer.softEmitted) {
+      timer.softEmitted = true;
+      updated = true;
+      await addSessionEvent('TIMER_SOFT_REACHED', { spotId: session.activeSpotId });
+    }
+    if (elapsed < timer.hardMs && timer.state !== 'soft_reached') {
+      timer.state = 'soft_reached';
+      updated = true;
+    }
+  }
+
+  if (elapsed >= timer.hardMs) {
+    if (!timer.hardEmitted) {
+      timer.hardEmitted = true;
+      updated = true;
+      hardTriggeredNow = true;
+      await addSessionEvent('TIMER_HARD_REACHED', { spotId: session.activeSpotId });
+    }
+    if (timer.state !== 'hard_reached') {
+      timer.state = 'hard_reached';
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    await saveSession(session);
+  }
+
+  if (hardTriggeredNow && navigator.vibrate) {
+    navigator.vibrate(200);
+  }
+}
+
+async function tickTimer() {
+  if (tickBusy) {
+    return;
+  }
+  tickBusy = true;
+  try {
+    const session = state.activeSession;
+    if (!session || session.status !== 'active' || !session.timer?.startedAt) {
+      stopTicker();
+      return;
+    }
+
+    const elapsed = Date.now() - session.timer.startedAt;
+    await evaluateTimer(session, elapsed);
+    renderTimerDisplay();
+
+    if (session.timer.state === 'hard_reached') {
+      stopTicker();
+    }
+  } finally {
+    tickBusy = false;
+  }
+}
+
+async function resumeTimerIfNeeded() {
+  const session = state.activeSession;
+  if (!session || !session.timer?.startedAt) {
+    stopTicker();
+    renderTimerDisplay();
+    return;
+  }
+
+  const elapsed = Date.now() - session.timer.startedAt;
+  await evaluateTimer(session, elapsed);
+  renderTimerDisplay();
+
+  if (session.timer.state === 'running' || session.timer.state === 'soft_reached') {
+    startTicker();
+  }
+}
+
+async function runSessionAction(action) {
+  if (state.actionBusy) {
+    return;
+  }
+  state.actionBusy = true;
+  updateSessionControls();
+  try {
+    await action();
+  } finally {
+    state.actionBusy = false;
+    updateSessionControls();
+  }
+}
+
+async function handleStartSession() {
+  await runSessionAction(async () => {
+    if (state.activeSession) {
+      window.alert('Sesi masih aktif.');
+      return;
+    }
+    await ensureSeedReady();
+    const session = await createSession(state.sessionMode);
+    state.activeSession = session;
+    state.sessionMode = session.mode;
+    await refreshActiveSpot();
+    await addSessionEvent('SESSION_STARTED', { mode: session.mode });
+    if (session.activeSpotId) {
+      await addSessionEvent('SPOT_SET_ACTIVE', { spotId: session.activeSpotId });
+    }
+    renderSessionUI();
+  });
+}
+
+async function handleEndSession() {
+  await runSessionAction(async () => {
+    if (!state.activeSession) {
+      window.alert('Belum ada sesi aktif.');
+      return;
+    }
+    stopTicker();
+    await addSessionEvent('SESSION_ENDED', {});
+    await endActiveSession();
+    state.activeSession = null;
+    state.activeSpot = null;
+    renderSessionUI();
+    await refreshLog();
+  });
+}
+
+async function handleArriveSpot() {
+  await runSessionAction(async () => {
+    const session = state.activeSession;
+    if (!session) {
+      window.alert('Belum ada sesi aktif.');
+      return;
+    }
+    if (session.timer?.startedAt) {
+      window.alert('Timer masih berjalan.');
+      return;
+    }
+    const now = Date.now();
+    session.timer = {
+      ...(session.timer || {}),
+      state: 'running',
+      startedAt: now,
+      softEmitted: false,
+      hardEmitted: false,
+    };
+    await saveSession(session);
+    await addSessionEvent('ARRIVED_AT_SPOT', { spotId: session.activeSpotId });
+    await addSessionEvent('TIMER_STARTED', {
+      spotId: session.activeSpotId,
+      softMs: session.timer.softMs,
+      hardMs: session.timer.hardMs,
+    });
+    renderSessionUI();
+    startTicker();
+  });
+}
+
+async function handleMoveNext() {
+  await runSessionAction(async () => {
+    const session = state.activeSession;
+    if (!session) {
+      window.alert('Belum ada sesi aktif.');
+      return;
+    }
+    const nextSpotId = await getNextSpotId(session.mode, session.activeSpotId);
+    if (!nextSpotId) {
+      window.alert('Spot berikutnya tidak ditemukan.');
+      return;
+    }
+    const previousSpotId = session.activeSpotId;
+    session.activeSpotId = nextSpotId;
+    session.timer = {
+      ...(session.timer || {}),
+      state: 'idle',
+      startedAt: null,
+      softEmitted: false,
+      hardEmitted: false,
+    };
+    await saveSession(session);
+    stopTicker();
+    await addSessionEvent('MOVE_TO_NEXT_SPOT', {
+      fromSpotId: previousSpotId,
+      toSpotId: nextSpotId,
+    });
+    await addSessionEvent('SPOT_SET_ACTIVE', { spotId: nextSpotId });
+    await refreshActiveSpot();
+    renderSessionUI();
+  });
+}
+
+async function handleOpenMaps() {
+  if (!state.activeSpot) {
+    window.alert('Belum ada spot aktif.');
+    return;
+  }
+  window.open(state.activeSpot.mapsUrl, '_blank', 'noopener');
+}
+
+async function handleQuickLog(type) {
+  await runSessionAction(async () => {
+    if (!state.activeSession) {
+      window.alert('Belum ada sesi aktif.');
+      return;
+    }
+    const payload = { spotId: state.activeSession.activeSpotId || null };
+    if (type === 'ORDER_SKIPPED') {
+      const reason = window.prompt('Alasan skip?');
+      if (reason === null) {
+        return;
+      }
+      payload.reason = reason;
+    }
+    if (type === 'TRIP_DROPOFF_RECORDED') {
+      const note = window.prompt('Catatan dropoff (opsional):');
+      if (note) {
+        payload.note = note;
+      }
+    }
+    await addSessionEvent(type, payload);
+  });
+}
+
+async function handleRotasiSpotClick(event) {
+  const target = event.target;
+  if (target.closest('a')) {
+    return;
+  }
+  const card = target.closest('.spot-card');
+  if (!card) {
+    return;
+  }
+  const spotId = card.dataset.spotId;
+  if (!spotId || !state.activeSession) {
+    return;
+  }
+  if (spotId === state.activeSession.activeSpotId) {
+    return;
+  }
+
+  await runSessionAction(async () => {
+    const session = state.activeSession;
+    if (!session) {
+      return;
+    }
+    session.activeSpotId = spotId;
+    session.timer = {
+      ...(session.timer || {}),
+      state: 'idle',
+      startedAt: null,
+      softEmitted: false,
+      hardEmitted: false,
+    };
+    await saveSession(session);
+    stopTicker();
+    await addSessionEvent('SPOT_SET_ACTIVE', { spotId });
+    await refreshActiveSpot();
+    renderSessionUI();
+  });
 }
 
 function registerServiceWorker() {
@@ -152,6 +700,63 @@ function registerServiceWorker() {
         console.error('SW registration failed', error);
       });
   });
+}
+
+async function initSessionState() {
+  const session = await getActiveSession();
+  if (session && session.status === 'active') {
+    state.activeSession = session;
+    state.sessionMode = session.mode;
+    await refreshActiveSpot();
+    await refreshLog();
+    renderSessionUI();
+    await resumeTimerIfNeeded();
+    return;
+  }
+  state.activeSession = null;
+  state.activeSpot = null;
+  renderSessionUI();
+  await refreshLog();
+}
+
+syncRoute();
+window.addEventListener('hashchange', syncRoute);
+
+rotasiModeButtons.forEach((button) => {
+  button.addEventListener('click', () => setRotasiMode(button.dataset.rotasiMode));
+});
+
+sessionModeButtons.forEach((button) => {
+  button.addEventListener('click', () => setSessionMode(button.dataset.sessionMode));
+});
+
+if (spotList) {
+  spotList.addEventListener('click', handleRotasiSpotClick);
+}
+
+if (startSessionButton) {
+  startSessionButton.addEventListener('click', handleStartSession);
+}
+if (endSessionButton) {
+  endSessionButton.addEventListener('click', handleEndSession);
+}
+if (arriveSpotButton) {
+  arriveSpotButton.addEventListener('click', handleArriveSpot);
+}
+if (moveNextButton) {
+  moveNextButton.addEventListener('click', handleMoveNext);
+}
+if (openMapsButton) {
+  openMapsButton.addEventListener('click', handleOpenMaps);
+}
+if (logAcceptButton) {
+  logAcceptButton.addEventListener('click', () => handleQuickLog('ORDER_ACCEPTED'));
+}
+if (logSkipButton) {
+  logSkipButton.addEventListener('click', () => handleQuickLog('ORDER_SKIPPED'));
+}
+if (logDropoffButton) {
+  logDropoffButton.addEventListener('click', () => handleQuickLog('TRIP_DROPOFF_RECORDED'));
 }
 
 if (resetButton) {
@@ -171,12 +776,13 @@ if (resetButton) {
   });
 }
 
-syncRoute();
-window.addEventListener('hashchange', syncRoute);
+async function initApp() {
+  await ensureSeedReady();
+  await initSessionState();
+  updateRotasiModeButtons();
+  updateSessionModeButtons();
+  setRotasiMode(state.rotasiMode);
+  registerServiceWorker();
+}
 
-toggleButtons.forEach((button) => {
-  button.addEventListener('click', () => setMode(button.dataset.mode));
-});
-
-setMode('A');
-registerServiceWorker();
+initApp();

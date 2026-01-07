@@ -1,6 +1,15 @@
 const DB_NAME = 'mdos';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = 'spots';
+const SESSION_STORE = 'sessions';
+const EVENTS_STORE = 'events';
+const KV_STORE = 'kv';
+const ACTIVE_SESSION_KEY = 'activeSessionId';
+
+const TIMER_LIMITS = {
+  A: { softMs: 12 * 60 * 1000, hardMs: 15 * 60 * 1000 },
+  B: { softMs: 10 * 60 * 1000, hardMs: 12 * 60 * 1000 },
+};
 
 let dbPromise = null;
 let dbInstance = null;
@@ -208,16 +217,49 @@ function openMdosDB() {
 
     request.onupgradeneeded = () => {
       const db = request.result;
-      let store;
+      const tx = request.transaction;
+      let spotStore;
 
       if (!db.objectStoreNames.contains(STORE)) {
-        store = db.createObjectStore(STORE, { keyPath: 'id' });
+        spotStore = db.createObjectStore(STORE, { keyPath: 'id' });
       } else {
-        store = request.transaction.objectStore(STORE);
+        spotStore = tx.objectStore(STORE);
       }
 
-      if (!store.indexNames.contains('by_mode_order')) {
-        store.createIndex('by_mode_order', ['mode', 'order']);
+      if (!spotStore.indexNames.contains('by_mode_order')) {
+        spotStore.createIndex('by_mode_order', ['mode', 'order']);
+      }
+
+      let sessionStore;
+      if (!db.objectStoreNames.contains(SESSION_STORE)) {
+        sessionStore = db.createObjectStore(SESSION_STORE, { keyPath: 'id' });
+      } else {
+        sessionStore = tx.objectStore(SESSION_STORE);
+      }
+
+      if (!sessionStore.indexNames.contains('by_status')) {
+        sessionStore.createIndex('by_status', 'status');
+      }
+      if (!sessionStore.indexNames.contains('by_startedAt')) {
+        sessionStore.createIndex('by_startedAt', 'startedAt');
+      }
+
+      let eventStore;
+      if (!db.objectStoreNames.contains(EVENTS_STORE)) {
+        eventStore = db.createObjectStore(EVENTS_STORE, { keyPath: 'id' });
+      } else {
+        eventStore = tx.objectStore(EVENTS_STORE);
+      }
+
+      if (!eventStore.indexNames.contains('by_session_at')) {
+        eventStore.createIndex('by_session_at', ['sessionId', 'at']);
+      }
+      if (!eventStore.indexNames.contains('by_type_at')) {
+        eventStore.createIndex('by_type_at', ['type', 'at']);
+      }
+
+      if (!db.objectStoreNames.contains(KV_STORE)) {
+        db.createObjectStore(KV_STORE, { keyPath: 'key' });
       }
     };
 
@@ -259,6 +301,13 @@ function transactionComplete(tx) {
   });
 }
 
+function generateId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
 async function seedSpotsIfEmpty() {
   const db = await openMdosDB();
   const checkTx = db.transaction(STORE, 'readonly');
@@ -285,6 +334,176 @@ async function getSpotsByMode(mode) {
   const results = await requestToPromise(index.getAll(range));
   await transactionComplete(tx);
   return results.slice().sort((a, b) => a.order - b.order);
+}
+
+async function getSpotById(spotId) {
+  if (!spotId) {
+    return null;
+  }
+  const db = await openMdosDB();
+  const tx = db.transaction(STORE, 'readonly');
+  const spot = await requestToPromise(tx.objectStore(STORE).get(spotId));
+  await transactionComplete(tx);
+  return spot || null;
+}
+
+async function getNextSpotId(mode, currentSpotId) {
+  const spots = await getSpotsByMode(mode);
+  if (!spots.length) {
+    return null;
+  }
+  const currentIndex = spots.findIndex((spot) => spot.id === currentSpotId);
+  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % spots.length : 0;
+  return spots[nextIndex].id;
+}
+
+async function setActiveSessionId(sessionId) {
+  const db = await openMdosDB();
+  const tx = db.transaction(KV_STORE, 'readwrite');
+  tx.objectStore(KV_STORE).put({ key: ACTIVE_SESSION_KEY, value: sessionId });
+  await transactionComplete(tx);
+}
+
+async function clearActiveSessionId() {
+  const db = await openMdosDB();
+  const tx = db.transaction(KV_STORE, 'readwrite');
+  tx.objectStore(KV_STORE).delete(ACTIVE_SESSION_KEY);
+  await transactionComplete(tx);
+}
+
+async function getActiveSessionId() {
+  const db = await openMdosDB();
+  const tx = db.transaction(KV_STORE, 'readonly');
+  const record = await requestToPromise(tx.objectStore(KV_STORE).get(ACTIVE_SESSION_KEY));
+  await transactionComplete(tx);
+  return record ? record.value : null;
+}
+
+async function createSession(mode) {
+  const now = Date.now();
+  const limits = TIMER_LIMITS[mode] || TIMER_LIMITS.A;
+  const spots = await getSpotsByMode(mode);
+  const firstSpotId = spots.length ? spots[0].id : null;
+
+  const session = {
+    id: generateId(),
+    mode,
+    status: 'active',
+    startedAt: now,
+    endedAt: null,
+    activeSpotId: firstSpotId,
+    timer: {
+      state: 'idle',
+      startedAt: null,
+      softMs: limits.softMs,
+      hardMs: limits.hardMs,
+      softEmitted: false,
+      hardEmitted: false,
+    },
+  };
+
+  const db = await openMdosDB();
+  const tx = db.transaction([SESSION_STORE, KV_STORE], 'readwrite');
+  tx.objectStore(SESSION_STORE).put(session);
+  tx.objectStore(KV_STORE).put({ key: ACTIVE_SESSION_KEY, value: session.id });
+  await transactionComplete(tx);
+  return session;
+}
+
+async function getActiveSession() {
+  const db = await openMdosDB();
+  const activeId = await getActiveSessionId();
+  if (activeId) {
+    const tx = db.transaction(SESSION_STORE, 'readonly');
+    const session = await requestToPromise(tx.objectStore(SESSION_STORE).get(activeId));
+    await transactionComplete(tx);
+    if (session && session.status === 'active') {
+      return session;
+    }
+  }
+
+  const fallbackTx = db.transaction(SESSION_STORE, 'readonly');
+  const index = fallbackTx.objectStore(SESSION_STORE).index('by_status');
+  const sessions = await requestToPromise(index.getAll('active'));
+  await transactionComplete(fallbackTx);
+
+  if (!sessions.length) {
+    if (activeId) {
+      await clearActiveSessionId();
+    }
+    return null;
+  }
+
+  sessions.sort((a, b) => b.startedAt - a.startedAt);
+  const session = sessions[0];
+  await setActiveSessionId(session.id);
+  return session;
+}
+
+async function updateSession(sessionUpdate) {
+  if (!sessionUpdate || !sessionUpdate.id) {
+    throw new Error('Session update membutuhkan id.');
+  }
+
+  const db = await openMdosDB();
+  const tx = db.transaction(SESSION_STORE, 'readwrite');
+  const store = tx.objectStore(SESSION_STORE);
+  const existing = await requestToPromise(store.get(sessionUpdate.id));
+  if (!existing) {
+    throw new Error('Session tidak ditemukan.');
+  }
+
+  const merged = {
+    ...existing,
+    ...sessionUpdate,
+    timer: {
+      ...(existing.timer || {}),
+      ...(sessionUpdate.timer || {}),
+    },
+  };
+
+  store.put(merged);
+  await transactionComplete(tx);
+}
+
+async function endActiveSession() {
+  const session = await getActiveSession();
+  if (!session) {
+    return;
+  }
+  session.status = 'ended';
+  session.endedAt = Date.now();
+  await updateSession(session);
+  await clearActiveSessionId();
+}
+
+async function addEvent(event) {
+  if (!event || !event.sessionId || !event.type) {
+    throw new Error('Event membutuhkan sessionId dan type.');
+  }
+  const record = {
+    id: event.id || generateId(),
+    sessionId: event.sessionId,
+    type: event.type,
+    at: event.at || Date.now(),
+    payload: event.payload || {},
+  };
+
+  const db = await openMdosDB();
+  const tx = db.transaction(EVENTS_STORE, 'readwrite');
+  tx.objectStore(EVENTS_STORE).add(record);
+  await transactionComplete(tx);
+}
+
+async function getEventsForSession(sessionId, limit = 200) {
+  const db = await openMdosDB();
+  const tx = db.transaction(EVENTS_STORE, 'readonly');
+  const index = tx.objectStore(EVENTS_STORE).index('by_session_at');
+  const range = IDBKeyRange.bound([sessionId, 0], [sessionId, Number.MAX_SAFE_INTEGER]);
+  const results = await requestToPromise(index.getAll(range));
+  await transactionComplete(tx);
+  results.sort((a, b) => a.at - b.at);
+  return results.slice(0, limit);
 }
 
 async function clearAllData() {

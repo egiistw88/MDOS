@@ -23,10 +23,34 @@
         <section id="sesi" class="tab-panel" data-tab="sesi">
           <h1>Sesi</h1>
           <p class="muted">Ringkasan sesi harian akan tampil di sini.</p>
-          <div class="placeholder-card">
-            <div class="placeholder-title">Belum ada sesi aktif</div>
-            <div class="placeholder-body">
-              Jalankan sesi baru untuk mulai pelacakan rotasi.
+          <div class="session-panel">
+            <div class="session-card">
+              <div class="session-status" id="session-status">Belum mulai</div>
+              <div class="session-mode">
+                <div class="label">Pilih Mode</div>
+                <div class="mode-toggle" role="group" aria-label="Mode sesi">
+                  <button class="toggle-button" data-session-mode="A" type="button">Mode A</button>
+                  <button class="toggle-button" data-session-mode="B" type="button">Mode B</button>
+                </div>
+              </div>
+              <div id="active-spot" class="active-spot"></div>
+            </div>
+            <div class="timer-card">
+              <div class="timer-display" id="timer-display">00:00</div>
+              <div class="timer-hint" id="timer-hint">Timer belum mulai.</div>
+              <progress id="timer-progress" class="timer-progress" value="0" max="1"></progress>
+            </div>
+            <div class="session-actions">
+              <button class="action-button" id="start-session" type="button">Mulai Sesi</button>
+              <button class="action-button action-secondary" id="end-session" type="button">Selesai Sesi</button>
+              <button class="action-button" id="arrive-spot" type="button">Saya Sampai</button>
+              <button class="action-button action-secondary" id="move-next" type="button">Pindah Spot Berikutnya</button>
+              <button class="action-button action-tertiary" id="open-maps" type="button">Buka Maps</button>
+            </div>
+            <div class="quick-actions">
+              <button class="pill-button" id="log-accept" type="button">Ambil</button>
+              <button class="pill-button" id="log-skip" type="button">Skip</button>
+              <button class="pill-button" id="log-dropoff" type="button">Selesai Antar</button>
             </div>
           </div>
         </section>
@@ -34,8 +58,8 @@
           <h1>Rotasi</h1>
           <p class="muted">Daftar titik jangkar untuk rotasi harian.</p>
           <div class="mode-toggle" role="group" aria-label="Mode rotasi">
-            <button class="toggle-button" data-mode="A" type="button">Mode A</button>
-            <button class="toggle-button" data-mode="B" type="button">Mode B</button>
+            <button class="toggle-button" data-rotasi-mode="A" type="button">Mode A</button>
+            <button class="toggle-button" data-rotasi-mode="B" type="button">Mode B</button>
           </div>
           <div class="rotasi-meta" id="rotasi-meta"></div>
           <ul class="spot-list" id="spot-list" role="list"></ul>
@@ -43,12 +67,8 @@
         <section id="log" class="tab-panel" data-tab="log">
           <h1>Log</h1>
           <p class="muted">Aktivitas penting akan tercatat di sini.</p>
-          <div class="placeholder-card">
-            <div class="placeholder-title">Log kosong</div>
-            <div class="placeholder-body">
-              Belum ada aktivitas tercatat untuk hari ini.
-            </div>
-          </div>
+          <div class="log-meta" id="log-meta">Event: 0</div>
+          <ul class="event-list" id="event-list" role="list"></ul>
         </section>
         <section id="setelan" class="tab-panel" data-tab="setelan">
           <h1>Setelan</h1>
